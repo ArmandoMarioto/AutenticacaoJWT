@@ -1,7 +1,7 @@
 import { createContext, ReactNode, useEffect, useState } from "react";
 import Router from "../node_modules/next/router";
 import { api } from "../service/apiClient";
-import {setCookie, parseCookies, destroyCookie} from 'nookies';
+import { setCookie, parseCookies, destroyCookie } from "nookies";
 
 type SignInCredentials = {
   email: string;
@@ -9,6 +9,7 @@ type SignInCredentials = {
 };
 type AuthContextData = {
   signIn(credentials: SignInCredentials): Promise<void>;
+  signOut(): void;
   isAuthenticated: boolean;
   user: User;
 };
@@ -24,27 +25,45 @@ type User = {
 
 export const AuthContext = createContext({} as AuthContextData);
 
-export function signOut() {
-  destroyCookie(undefined, 'nextauth.token');
-  destroyCookie(undefined, 'nextauth.refreshToken');
-  Router.push('/');
+let authChannel: BroadcastChannel;
+
+export async function signOut(broadcast: boolean = true) {
+  destroyCookie(undefined, "nextauth.token");
+  destroyCookie(undefined, "nextauth.refreshToken");
+  if (broadcast) authChannel.postMessage("signOut");
+  Router.push("/");
 }
 
 export function AuthProvider({ children }: AuthProviderprops) {
   const [user, setUser] = useState<User>();
   const isAuthenticated = !!user;
   useEffect(() => {
-    const { 'nextauth.token': token } = parseCookies();
+    authChannel = new BroadcastChannel("auth");
+    authChannel.onmessage = (message) => {
+      switch (message.data) {
+        case "signOut":
+          signOut(false);
+          break;
+        default:
+          break;
+      }
+    };
+  }, []);
+  useEffect(() => {
+    const { "nextauth.token": token } = parseCookies();
 
     if (token) {
-      api.get('/me').then(response => {
-        const {email, permissions, roles} = response.data;
-        setUser({email, permissions, roles});
-      }).catch( error => {
-        signOut();
-      })
+      api
+        .get("/me")
+        .then((response) => {
+          const { email, permissions, roles } = response.data;
+          setUser({ email, permissions, roles });
+        })
+        .catch((error) => {
+          signOut();
+        });
     }
-  }, [])
+  }, []);
   const signIn = async ({
     email,
     password,
@@ -56,28 +75,29 @@ export function AuthProvider({ children }: AuthProviderprops) {
       });
 
       const { token, refreshToken, permissions, roles } = response.data;
-      setCookie(undefined, 'nextauth.token', token, {
+      setCookie(undefined, "nextauth.token", token, {
         maxAge: 30 * 24 * 60 * 60,
-        path: '/',
-      })
-      setCookie(undefined, 'nextauth.refreshToken', refreshToken, {
+        path: "/",
+      });
+      setCookie(undefined, "nextauth.refreshToken", refreshToken, {
         maxAge: 30 * 24 * 60 * 60,
-        path: '/',
-      })
-      setUser({ 
+        path: "/",
+      });
+      setUser({
         email,
         permissions,
         roles,
-      })
+      });
 
-      api.defaults.headers['Authorization'] = `Bearer ${token}`;
+      api.defaults.headers["Authorization"] = `Bearer ${token}`;
       Router.push("/dashboard");
+
     } catch (error) {
       console.log(error);
     }
   };
   return (
-    <AuthContext.Provider value={{ signIn, isAuthenticated, user }}>
+    <AuthContext.Provider value={{ signIn, signOut, isAuthenticated, user }}>
       {children}
     </AuthContext.Provider>
   );
